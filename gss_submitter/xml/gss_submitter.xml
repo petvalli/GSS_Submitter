@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="iso-8859-1"?>
+<application id="gss_app">
+    <menubar id="gss_menu">
+        <menu title="File">
+            <item id="gss_settings">Settings...</item>
+            <item/>
+            <item id="gss_about">About...</item>
+            <item id="gss_rapagui">
+                About RapaGUI...</item>
+            <item/>
+            <item id="gss_quit">Quit</item>
+        </menu>
+    </menubar>
+    <window id="gss_win" title="GSS Submitter" menubar="gss_menu" width="screen:35" height="screen:70">
+        <vgroup>
+            <hgroup>
+                <vgroup>
+                    <rectangle/>
+                    <button id="gss_parent" disabled="true">Parent</button>
+                </vgroup>
+                <rectangle/>
+                <image brush="1"/>
+                <rectangle/>
+                <vgroup>
+                    <rectangle/>
+                    <button id="gss_home">Home</button>
+                </vgroup>
+            </hgroup>
+            <vgroup id="gss_items" frame="true" frametitle="Items">
+                <listview id="gss_lv" notify="active;doubleclick">
+                    <column title="name"/>
+                </listview>
+            </vgroup>
+            <vgroup frame="true" frametitle="Information">
+                <textview id="gss_info" align="left"> </textview>
+            </vgroup>
+            <vgroup id="gss_buttons" frame="true" frametitle="Controls">
+                <rectangle/>
+            </vgroup>
+        </vgroup>
+    </window>
+</application>
+

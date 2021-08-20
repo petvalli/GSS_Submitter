@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="iso-8859-1"?>
+<dialog id="gss_settings_dlg" title="Settings" width="%WIDTH">
+	<vgroup>
+		<colgroup columns="2">
+			<label>Host address</label>
+			<textentry id="gsss_host"/>
+			<label>API path (Home)</label>
+			<textentry id="gsss_path"/>
+			<label>Player name</label>
+			<textentry id="gsss_user"/>
+			<label>Password</label>
+			<textentry id="gsss_pass" password="true"/>
+		</colgroup>
+		<hgroup>
+			<button id="gsss_ok" hint="positive">OK</button>
+			<button id="gsss_cancel" hint="negative">Cancel</button>
+		</hgroup>
+	</vgroup>
+</dialog>

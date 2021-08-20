@@ -1,0 +1,529 @@
+/*
+** GSS Submitter is a hypermedia driven client to access the GameScoreService API.
+** It basically builds the GUI dynamically from hypermedia controls and exposes all
+** functionality of the API to a user. The API uses Mason hypermedia format.
+*/
+
+; This script requires Hollywood 9.0
+@VERSION 9,0
+
+; Plugin requirements, link into executables when compiled
+@REQUIRE "RapaGUI", {Version = 2, Revision = 0, Link = True}
+@REQUIRE "hURL", {Version = 1, Revision = 1, Link = True}
+
+; Application configuration
+@APPTITLE "GSS Submitter"
+@APPAUTHOR "Petteri Valli and Mirva Luukkainen"
+@APPDESCRIPTION "A hypermedia API browser"
+@APPIDENTIFIER "com.github.petvalli.gsssubmitter"
+@APPICON "gfx/gssicon.png"
+@OPTIONS {DPIAware = True}
+
+; Include JSON library by Fabio Falcucci
+@INCLUDE "lib/JSON.hws"
+
+; Linked data files (static GUI definitions, logo)
+@FILE 1, "xml/gss_submitter.xml"
+@FILE 2, "xml/gss_settings.xml"
+@BRUSH 1, "gfx/gss100.png", {LoadAlpha=True}
+
+
+; Constants
+Const #APPVERSION = "1.0"
+Const #APPNAME = "GSS Submitter"
+Const #CONTENTTYPE = "Content-Type: application/json"
+
+
+Function p_Error(err$)
+    /*
+    ** A convenience function for error requesters.
+    ** param err$: Error string
+    */
+
+    moai.Request("", err$, "OK", "Error")
+
+EndFunction
+
+
+Function p_Confirm(txt$)
+    /*
+    ** A confirm requester that asks Yes/No question from the user.
+    ** param txt$: Question string
+    ** return: 1 for Yes, 0 for No
+    */
+
+    Local r = moai.Request("", txt$, "Yes|No")
+    Return(r)
+
+EndFunction
+
+
+Function p_EventFunc(msg)
+    /*
+    ** A function to handle incoming events.
+    ** param msg: Message table from the event handler
+    */
+
+    DebugPrint(msg.Class, msg.Attribute, msg.ID)
+    Switch msg.Class
+    Case "Button":
+        Switch msg.Attribute
+        Case "Pressed":
+            Switch msg.ID
+            Case "gss_parent":
+                FallThrough
+            Case "gss_home":
+                ; Parent and Home buttons have a URI in object's UserData.
+                ; Pass the URI to the browsing function.
+                ud$ = RawGet(msg, "moaiuserdata")
+                If ud$ Then p_Browse(ud$)
+            Case "dlg_ok":
+                ; OK button was pressed in a dialog window. Create a request table
+                ; from the information in the dialog and close the dialog.
+                If p_CreateRequestTable()
+                    moai.DoMethod("gss_dlg", "EndModal", True)
+                EndIf
+            Case "dlg_cancel":
+                ; Cancel button was pressed in a dialog window.
+                moai.DoMethod("gss_dlg", "EndModal", False)
+            Case "gsss_ok":
+                ; Settings window was closed with the Ok button. Take in use and save.
+                g_settings.host = moai.Get("gsss_host", "text")
+                g_settings.path = moai.Get("gsss_path", "text")
+                g_settings.user = moai.Get("gsss_user", "text")
+                g_settings.pass = moai.Get("gsss_pass", "text")
+                ; API path must start and end with /
+                If Not StartsWith(g_settings.path, "/") Then g_settings.path = "/" .. g_settings.path
+                If Not EndsWith(g_settings.path, "/") Then g_settings.path = g_settings.path .. "/"
+                g_settings.host = TrimStr(g_settings.host, "/", True)
+                SavePrefs(g_settings)
+                moai.DoMethod("gss_settings_dlg", "EndModal", True)
+            Case "gsss_cancel":
+                ; Cancel button was pressed in the Settings window.
+                moai.DoMethod("gss_settings_dlg", "EndModal", False)
+            Default:
+                ; A dynamically created button was pressed. We get the hypermedia control's table
+                ; in the UserData. The table contains URI, method, schema, etc information.
+                Local ud = msg.MOAIUserData
+                Local met$ = RawGet(ud, "method")
+                Local t, loc$, retval
+                Switch met$
+                Case "PUT":
+                    ; POST and PUT work with the same routine
+                    FallThrough
+                Case "POST":
+                    If msg.ID = "gss:add-player"
+                        ; This program handles player adding in a custom way and it doesn't
+                        ; ask information in a dialog, but creates a request according the
+                        ; values set in the Settings window.
+                        g_fields = {}
+                        For key$, value In Pairs(ud.schema.properties)
+                            Local val$ = ""
+                            If key$ = "name" Then val$ = g_settings.user
+                            g_fields[key$] = {value=val$, type=value.type, req=True}
+                        Next
+                        retval = p_CreateRequestTable()
+                    Else
+                        ; For all other cases a new dialog is created, and request is created
+                        ; after user has filled the fields and clicked the OK button. If user
+                        ; cancels the dialog, retval will be False and no request will be sent.
+                        p_CreateDialog(ud, met$)
+                        retval = moai.DoMethod("gss_dlg", "ShowModal")
+                    EndIf
+                    If retval
+                        ; Convert body table to JSON
+                        Local body$ = SerializeTable(g_body)
+                        ; Send a request and capture Location header
+                        t, loc$ = p_SendRequest(met$, ud.href, body$)
+                        ; Force a refresh of the current URI in case of editing
+                        If Not loc$ And met$ = "PUT" Then loc$ = ud.href
+                    EndIf
+                Case "DELETE":
+                    ; In the current implementation, anyone can delete resources, so better confirm
+                    If p_Confirm("Do you want to delete this resource:\n\n" .. ReplaceStr(ud.href, "%20", " "))
+                        t, loc$ = p_SendRequest("DELETE", ud.href)
+                    EndIf
+                Default:
+                    ; The GET method "browses" to the given address
+                    p_Browse(ud.href)
+                EndSwitch
+                ; If the Location header was set in any of the methods
+                If loc$ Then p_Browse(loc$)
+            EndSwitch
+        EndSwitch
+
+    Case "Listview":
+        ; Single click on an item in the Items list will access the item.
+        Switch msg.Attribute
+        Case "Active":
+            Local act = msg.TriggerValue
+            If act >= 0 Then p_Browse(g_item_href[act])
+        EndSwitch
+
+    Case "Menuitem":
+        ; A menu item from the drop-down menu was selected.
+        Switch msg.Attribute
+        Case "Selected":
+            Switch msg.id
+            Case "gss_settings":
+                ; Create the settings dialog and set the current values to its fields.
+                moai.CreateDialog(g_settings_xml$, "gss_win")
+                moai.Set("gsss_host", "text", g_settings.host)
+                moai.Set("gsss_path", "text", g_settings.path)
+                moai.Set("gsss_user", "text", g_settings.user)
+                moai.Set("gsss_pass", "text", g_settings.pass)
+                moai.DoMethod("gss_settings_dlg", "ShowModal")
+            Case "gss_about":
+                moai.Request("", #APPNAME .. " " .. #APPVERSION .. "\n\nBy Petteri Valli and Mirva Luukkainen", "OK")
+            Case "gss_rapagui":
+                moai.DoMethod("gss_app", "aboutrapagui")
+            Case "gss_quit":
+                End
+            EndSwitch
+        EndSwitch
+    EndSwitch
+
+EndFunction
+
+
+Function p_CreateDialog(ctrl, met$)
+    /*
+    ** This Function creates a new dialog by creating an XML GUI definition dynamically from the
+    ** control's schema. Required fields are marked with an asterisk. For this implementation
+    ** player information and dates are skipped, because player info is entered in the Settings
+    ** window and dates are created automatically. Fields are stored in a global variable which is
+    ** used to create a request body with the p_CreateRequestTable() function.
+    ** param ctrl: Control's information table
+    ** param met$: Request method string
+    */
+
+    g_fields = {}
+    Local reqs = ctrl.schema.required
+    Local props = ctrl.schema.properties
+
+    ; Create first part of the XML definition
+    Local xml$ = [[<?xml version="1.0" encoding="iso-8859-1"?>
+        <dialog id="gss_dlg" title="]] .. ctrl.title .. [[" width="]] .. g_width$ .. [[">
+        	<vgroup>
+        		<colgroup columns="1">
+    ]]
+
+    ; Create input fields in the middle
+    For key$, value In Pairs(props)
+        Local req = False
+        ; Check if the field is in the required list
+        ForEachI(reqs, Function(i, v) If v = key$ Then req = True EndFunction)
+        ; Skip the certain fields
+        If key$ <> "unique_name" And key$ <> "player" And key$ <> "date" And key$ <> "password"
+            xml$ = xml$ .. "<label align=\"left\">" .. value.description .. IIf(req, " *", "") ..
+                "</label><textentry id=\"dlg_" .. key$ .. "\"" ..
+                IIf(value.type="number", " accept=\"0123456789\"", "") ..
+                ">"
+            If met$ = "PUT"
+                ; If editing, pre-fill the current data
+                Local s, e, text$ = PatternFindStrDirect(g_info$, key$ .. ": (.-)\n")
+                If s >= 0 Then xml$ = xml$ .. text$
+            EndIf
+            xml$ = xml$ .. "</textentry>"
+        EndIf
+        g_fields[key$] = {value="", type=value.type, req=req}
+    Next
+
+    ; Finish the XML definition
+    xml$ = xml$ .. [[
+                </colgroup>
+                <rectangle/>
+                <text align="right">* required field</text>
+        		<hgroup>
+        			<button id="dlg_ok" hint="positive">OK</button>
+        			<button id="dlg_cancel" hint="negative">Cancel</button>
+        		</hgroup>
+        	</vgroup>
+        </dialog>
+    ]]
+
+    ; Use the created XML definition to create a new dialog window
+    moai.CreateDialog(xml$, "gss_win")
+
+EndFunction
+
+
+Function p_CreateRequestTable()
+    /*
+    ** Creates a request body (table) from the values user has entered in a dialog. User related
+    ** values are taken from the settings and the date is created automatically from the local
+    ** client time. Request body is created into a global g_body variable. Input value validity is
+    ** also checked at this point to avoid useless requests to the API.
+    */
+
+    g_body = {}
+    For key$, table In Pairs(g_fields)
+        Local value
+        If key$ = "unique_name" Or key$ = "player"
+            value = ReplaceStr(LowerStr(g_settings.user), " ", "_")
+        ElseIf key$ = "password"
+            value = MD5Str(g_settings.pass)
+        ElseIf key$ = "date"
+            value = FormatStr("%.4d-%.2d-%.2d %s", GetDateNum(#DATEYEAR), GetDateNum(#DATEMONTH), GetDateNum(#DATEDAY), GetTime(True))
+        Else
+            value = table.value
+            If Not value Then value = moai.Get("dlg_" .. key$, "text")
+            If table.req And Not value
+                p_Error("The " .. key$ .. " field is requred.")
+                Return
+            ElseIf table.type = "number"
+                value = ToNumber(value)
+                If Not value
+                    p_Error(key$ .. " has to be a number.")
+                    Return
+                EndIf
+            ElseIf key$ = "date"
+                If PatternFindStrDirect(value, "[^%d:%- ]") >= 0
+                    p_Error(key$ .. " has to be in yyyy-mm-dd hh:mm:ss format.")
+                    Return
+                EndIf
+            ElseIf PatternFindStrDirect(value, "[^%w_ ]") >= 0
+                p_Error(key$ .. " has to be alphanumeric (English) with spaces or underscores.")
+                Return
+            EndIf
+        EndIf
+        g_body[key$] = value
+    Next
+    Return(True)
+EndFunction
+
+
+Function p_SendRequest(method$, path$, body$)
+    /*
+    ** The internal DownloadFile() function only supports GET and POST methods, and a custom
+    ** function using the hURL plugin is needed.
+    ** param method$: Method string
+    ** param path$: URI to send the request
+    ** param body$: Message body in JSON
+    ** return resp: Response body table
+    ** return loc$: Location header string
+    */
+
+    Local e = hurl.Easy()
+    Local response$ = ""
+    Local err, resp, resp_code, loc$
+
+    Switch LowerStr(method$)
+    Case "put":
+        e:SetOpt_HTTPHeader({#CONTENTTYPE})
+        e:SetOpt_CustomRequest("PUT")
+        e:SetOpt_PostFields(body$)
+    Case "post":
+        e:SetOpt_HTTPHeader({#CONTENTTYPE})
+        e:SetOpt_CustomRequest("POST")
+        e:SetOpt_PostFields(body$)
+    Case "delete":
+        e:SetOpt_HTTPHeader({#CONTENTTYPE})
+        e:SetOpt_CustomRequest("DELETE")
+    EndSwitch
+
+	e:SetOpt_Timeout(10)
+    e:SetOpt_ConnectTimeout(10)
+    e:SetOpt_NoProgress(1)
+    e:SetOpt_URL(g_settings.host .. path$)
+    ; Write the received data to a local variable
+    e:SetOpt_WriteFunction(Function(s$) response$ = response$ .. s$ EndFunction)
+    ; Check if there's a location header and store it to the loc$ variable
+    e:SetOpt_HeaderFunction(Function(s$) If StartsWith(s$, "Location:") Then loc$ = PatternFindStrShort(s$, "http://.-(/.+/)") EndFunction)
+
+    ; Perform the request and catch any errors
+    moai.Set("gss_app", "sleep", True)
+    ExitOnError(False)
+    e:Perform()
+    err = GetLastError()
+    ExitOnError(True)
+    moai.Set("gss_app", "sleep", False)
+    If err
+        p_Error(GetErrorName(err) .. " (" .. err .. ")")
+    Else
+        resp_code = e:GetInfo_Response_Code()
+    EndIf
+    e:Close()
+
+    ; Convert the JSON response to a table
+    resp = JSON.Decode(response$)
+
+    ; Display a message if the response code indicates an error
+    If resp_code >= 400
+        Local err$
+        If HaveItem(resp, "@error")
+            err$ = resp["@error"]["@message"] .. " (" .. resp_code .. ")"
+            If resp_code > 400 Then err$ = err$ .. "\n\n" .. Concat(resp["@error"]["@messages"], "\n")
+        ElseIf resp_code >= 500
+            err$ = "Server error: " .. resp_code
+        Else
+            err$ = "Error: " .. resp_code
+        EndIf
+        p_Error(err$)
+        resp = {}
+    EndIf
+
+    DebugPrint("L:", loc$)
+
+    Return(resp, loc$)
+
+EndFunction
+
+Function p_AddControls(key$, table)
+    /*
+    ** Creates button objects from hypermedia controls and creates a global list of the buttons.
+    ** Collection and Up are handled differently, because they are used with the fixed Parent
+    ** button on the GUI.
+    ** param key$: Hypermedia control string
+    ** param table: Control's table (dictionary)
+    */
+
+    If key$ = "collection" Or key$ = "up"
+        ; Enable the Parent button if Collection or Up control was found
+        moai.Set("gss_parent", "disabled", False)
+        ; Set button's UserData as the URI of the control
+        moai.Set("gss_parent", "userdata", table.href)
+    ElseIf HaveItem(table, "title") Or key$ = "author"
+        ; Create a button if control has a title or is author
+        Local title$
+        If key$ = "author"
+            title$ = "View author"
+        Else
+            title$ = table.title
+        EndIf
+        ; Use the title as button text
+    	moai.CreateObject("<button id=\"" .. key$ .. "\">" .. title$ .. "</button>", "gss_buttons")
+        ; Set the control table in the button's UserData. Event handling function gets this data
+        ; when button gets clicked and we avoid having a big global table for all this.
+        moai.Set(key$, "userdata", table)
+        ; Insert the button in the GUI
+    	moai.DoMethod("gss_buttons", "prepend", key$)
+        InsertItem(g_buttons, key$)
+    EndIf
+
+EndFunction
+
+
+Function p_Browse(path$)
+    /*
+    ** GETs the given resource URI and displays the resource information in the information text
+    ** box, adds control buttons, and fills the items list.
+    ** param path$: URI string
+    */
+
+    ; Send a request and get the response body as a table (t)
+    Local t = p_SendRequest("GET", path$)
+
+    ; Init the information box text
+    Local info$ = "location: " .. ReplaceStr(path$, "%20", " ") .. "\n"
+
+    ; Clear the items list view and set the Parent button disabled
+    moai.DoMethod("gss_lv", "Clear")
+    moai.Set("gss_parent", "disabled", True)
+
+    ; Fill the text box with all information that isn't Mason attributes or items
+    For key$, value In Pairs(t)
+        If Not StartsWith(key$, "@") And GetType(value) <> #TABLE
+            info$ = info$ .. key$ .. ": " .. value .. "\n"
+        EndIf
+    Next
+    moai.Set("gss_info", "text", info$)
+    g_info$ = info$
+
+    ; Remove the old buttons from the GUI
+    moai.DoMethod("gss_buttons", "initchange")
+    For Local i = 0 To ListItems(g_buttons) - 1
+        moai.DoMethod("gss_buttons", "remove", g_buttons[i])
+        moai.FreeObject(g_buttons[i])
+    Next
+    g_buttons = {}
+
+    ; Add new buttons into the GUI if hypermedia controls are found
+    If HaveItem(t, "@controls")
+        ForEach(t["@controls"], p_AddControls)
+    Else
+        DebugPrint("No controls found.")
+    EndIf
+    moai.DoMethod("gss_buttons", "exitchange", False)
+
+    ; If there are items, add them into the list
+    If HaveItem(t, "items")
+        Local items = ListItems(t["items"])
+        If items > 0
+            Local columns = {}
+            Local oldcols = moai.Get("gss_lv", "columns")
+            g_item_href = {}
+
+            ; Remove old columns from the list view
+            For Local i = 0 To oldcols - 1
+                moai.DoMethod("gss_lv", "removecolumn", "last")
+            Next
+
+            ; Create new columns according the first item
+            For key$, value In Pairs(t["items"][0])
+                If Not StartsWith(key$, "@")
+                    Local pos = -1
+                    If key$ = "name" Then pos = 0
+                    InsertItem(columns, key$, pos)
+                EndIf
+            Next
+            For Local i = 0 To ListItems(columns) - 1
+                moai.DoMethod("gss_lv", "insertcolumn", "last", "col_" .. columns[i], {Title=columns[i]})
+            Next
+
+            ; Fill the list with items and store item URIs in a global table
+            For Local i = 0 To items - 1
+                Local it = t["items"][i]
+                Local coldata = {}
+                Local href$ = ""
+                If HaveItem(it, "@controls") And HaveItem(it["@controls"], "self") And HaveItem(it["@controls"].self, "href")
+                    href$ = it["@controls"].self.href
+                EndIf
+                InsertItem(g_item_href, href$)
+                For Local j = 0 To ListItems(columns) - 1
+                    InsertItem(coldata, it[columns[j]])
+                Next
+                moai.DoMethod("gss_lv", "insert", "bottom", Unpack(coldata))
+            Next
+        EndIf
+    Else
+        DebugPrint("No items found.")
+    EndIf
+
+EndFunction
+
+
+; Global variables and default settings
+g_ver = GetVersion()
+g_width$ = "screen:30"
+g_info$ = ""
+g_buttons = {}
+g_fields = {}
+g_body = {}
+g_item_href = {}
+g_settings_xml$ = ReadString(2)
+g_settings = {
+    host = "http://192.168.1.5:5000",
+    path = "/api/",
+    user = "Player 2",
+    pass = "pw 2"
+}
+
+; Use default dialog sizes for Android
+If g_ver.platform = "Android" Then g_width$ = "default"
+g_settings_xml$ = ReplaceStr(g_settings_xml$, "%WIDTH", g_width$)
+
+; Update settings with saved ones if available
+LoadPrefs(g_settings)
+
+
+; Create the main application window and set the initial path to the Home button
+InstallEventHandler({RapaGUI = p_EventFunc})
+moai.CreateApp(ReadString(1))
+moai.Set("gss_home", "userdata", g_settings.path)
+
+
+; Main loop
+Repeat
+   WaitEvent
+Forever
