@@ -204,8 +204,8 @@ Function p_CreateDialog(ctrl, met$)
     ; Create first part of the XML definition
     Local xml$ = [[<?xml version="1.0" encoding="iso-8859-1"?>
         <dialog id="gss_dlg" title="]] .. ctrl.title .. [[" width="]] .. g_width$ .. [[">
-        	<vgroup>
-        		<colgroup columns="1">
+            <vgroup>
+                <colgroup columns="1">
     ]]
 
     ; Create input fields in the middle
@@ -234,11 +234,11 @@ Function p_CreateDialog(ctrl, met$)
                 </colgroup>
                 <rectangle/>
                 <text align="right">* required field</text>
-        		<hgroup>
-        			<button id="dlg_ok" hint="positive">OK</button>
-        			<button id="dlg_cancel" hint="negative">Cancel</button>
-        		</hgroup>
-        	</vgroup>
+                <hgroup>
+                    <button id="dlg_ok" hint="positive">OK</button>
+                    <button id="dlg_cancel" hint="negative">Cancel</button>
+                </hgroup>
+            </vgroup>
         </dialog>
     ]]
 
@@ -322,7 +322,7 @@ Function p_SendRequest(method$, path$, body$)
         e:SetOpt_CustomRequest("DELETE")
     EndSwitch
 
-	e:SetOpt_Timeout(10)
+    e:SetOpt_Timeout(10)
     e:SetOpt_ConnectTimeout(10)
     e:SetOpt_NoProgress(1)
     e:SetOpt_URL(g_settings.host .. path$)
@@ -392,12 +392,12 @@ Function p_AddControls(key$, table)
             title$ = table.title
         EndIf
         ; Use the title as button text
-    	moai.CreateObject("<button id=\"" .. key$ .. "\">" .. title$ .. "</button>", "gss_buttons")
+        moai.CreateObject("<button id=\"" .. key$ .. "\">" .. title$ .. "</button>", "gss_buttons")
         ; Set the control table in the button's UserData. Event handling function gets this data
         ; when button gets clicked and we avoid having a big global table for all this.
         moai.Set(key$, "userdata", table)
         ; Insert the button in the GUI
-    	moai.DoMethod("gss_buttons", "prepend", key$)
+        moai.DoMethod("gss_buttons", "prepend", key$)
         InsertItem(g_buttons, key$)
     EndIf
 
@@ -503,7 +503,7 @@ g_body = {}
 g_item_href = {}
 g_settings_xml$ = ReadString(2)
 g_settings = {
-    host = "http://192.168.1.5:5000",
+    host = "http://localhost:5000",
     path = "/api/",
     user = "Player 2",
     pass = "pw 2"
